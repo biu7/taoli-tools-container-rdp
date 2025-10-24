@@ -1,43 +1,62 @@
 #!/bin/sh
 set -eu
 
-VNC_PID=""
-WEBSOCKIFY_PID=""
-OPENBOX_PID=""
-BROWSER_PID=""
 TAILSCALED_PID=""
 TAILSCALE_PID=""
 
 cleanup() {
-  for pid in "$VNC_PID" "$WEBSOCKIFY_PID" "$OPENBOX_PID" "$BROWSER_PID" "$TAILSCALED_PID" "$TAILSCALE_PID"; do
+  echo "Cleaning up..."
+  for pid in "$TAILSCALED_PID" "$TAILSCALE_PID"; do
     if [ -n "$pid" ]; then
       kill "$pid" 2>/dev/null || true
     fi
   done
+  # 停止 XRDP 服务
+  killall xrdp 2>/dev/null || true
+  killall xrdp-sesman 2>/dev/null || true
 }
 trap cleanup INT TERM
 
-Xvnc $DISPLAY -rfbport $VNC_PORT -localhost -AlwaysShared -SecurityTypes None -depth 16 &
-VNC_PID=$!
+# 创建必要的目录
+mkdir -p /var/run/xrdp
+mkdir -p /var/log
 
-mkdir -p $HOME/websockify
-openssl req -new -newkey rsa:4096 -x509 -sha256 -days 365 -nodes -subj /CN=localhost -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' -out $HOME/websockify/CERT.pem -keyout $HOME/websockify/KEY.pem
-websockify --web /usr/share/novnc/ --cert $HOME/websockify/CERT.pem --key $HOME/websockify/KEY.pem 127.0.0.1:$NOVNC_PORT 127.0.0.1:$VNC_PORT &
-WEBSOCKIFY_PID=$!
+# 启动 XRDP Session Manager
+echo "Starting XRDP Session Manager..."
+/usr/sbin/xrdp-sesman
 
-openbox-session &
-OPENBOX_PID=$!
+sleep 2
 
-rm -f $HOME/data/SingletonLock
-chromium --display=$DISPLAY --enable-features=WebContentsForceDark --no-default-browser-check --no-first-run --disable-gpu --use-gl=disabled --disable-dev-shm-usage --start-fullscreen --user-data-dir=$HOME/data https://taoli.tools &
-BROWSER_PID=$!
+# 启动 XRDP
+echo "Starting XRDP..."
+/usr/sbin/xrdp -n &
 
-tailscaled --tun=userspace-networking --socket=$HOME/tailscale.socket &
+sleep 2
+
+# 启动 Tailscale 守护进程
+echo "Starting Tailscale daemon..."
+su - taoli -c "tailscaled --tun=userspace-networking --socket=/home/taoli/tailscale.socket" &
 TAILSCALED_PID=$!
 
 sleep 5
 
-tailscale --socket=$HOME/tailscale.socket up --hostname=taoli-tools-container --qr &
+# 启动 Tailscale 并显示 QR 码
+echo "Starting Tailscale and showing QR code..."
+su - taoli -c "tailscale --socket=/home/taoli/tailscale.socket up --hostname=taoli-tools-container --qr" &
 TAILSCALE_PID=$!
 
-wait $BROWSER_PID
+echo "========================================"
+echo "XRDP is ready!"
+echo "========================================"
+echo ""
+echo "Scan the QR code above to add this container to your Tailscale network."
+echo "Then connect using RDP client to the Tailscale IP (100.x.x.x:3389)"
+echo ""
+echo "Username: taoli"
+echo "Password: (no password required - auto login enabled)"
+echo ""
+echo "Check Tailscale IP at: https://login.tailscale.com/admin/machines"
+echo "========================================"
+
+# 保持容器运行
+wait

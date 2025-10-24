@@ -1,0 +1,16 @@
+version: "3.9"
+
+services:
+  container:
+    image: ghcr.io/aliez-ren/taoli-tools-container:latest
+    container_name: taoli-tools-container
+    restart: always
+    security_opt:
+      - seccomp:./chromium.json
+    volumes:
+      - data:/home/taoli/data
+      - tailscale:/var/lib/tailscale
+
+volumes:
+  data:
+  tailscale:

@@ -1,31 +1,15 @@
 #!/bin/sh
 
-mkdir -p /etc/docker
-
-echo "{\"seccomp-profile\": \"/etc/docker/chromium-seccomp.json\"}" > /etc/docker/daemon.json
-
-curl -fsSL https://github.com/aliez-ren/taoli-tools-container/raw/refs/heads/main/chromium.json > /etc/docker/chromium-seccomp.json
-
+# 安装 Docker
 curl -fsSL https://get.docker.com | sh
 
-curl -fsSL https://github.com/aliez-ren/taoli-tools-container/raw/refs/heads/main/compose.yml > compose.yml
+# 下载配置文件
+curl -fsSL https://github.com/biu7/taoli-tools-container-rdp/raw/refs/heads/main/docker-compose.yml > docker-compose.yml
+curl -fsSL https://github.com/biu7/taoli-tools-container-rdp/raw/refs/heads/main/chromium.json > chromium.json
 
-openssl req -new -newkey rsa:4096 -x509 -sha256 -days 365 -nodes -subj /CN=signer -addext 'subjectAltName=DNS:signer,IP:127.0.0.1' -out CERT.pem -keyout KEY.pem
+# 拉取最新镜像并启动服务
+docker-compose pull
+docker-compose up -d
 
-if [ ! -f keychain.toml ]; then
-  echo " " > keychain.toml
-fi
-
-docker swarm init
-
-docker pull ghcr.io/aliez-ren/taoli-tools-container:latest
-
-docker pull ghcr.io/aliez-ren/taoli-tools-signer:latest
-
-docker stack deploy -c compose.yml -d taoli_tools
-
-rm -f keychain.toml KEY.pem
-
-mv CERT.pem /mnt/
-
-docker service logs -f taoli_tools_container
+# 查看日志
+docker-compose logs -f container
