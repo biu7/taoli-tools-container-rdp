@@ -10,21 +10,23 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 docker run --rm -i --name "$test_container" --network none \
+  --ulimit nofile=1024:65535 \
   --security-opt "seccomp=$project_root/chromium.json" "$image" sh -eu <<'CONTAINER'
 fail() {
   echo "FAIL: $*" >&2
   exit 1
 }
 
-mkdir -p /run/xrdp
-xrdp-sesman -n >/tmp/sesman-test.log 2>&1 &
-sesman_pid=$!
+/usr/local/bin/entrypoint.sh >/tmp/entrypoint-test.log 2>&1 &
+entrypoint_pid=$!
 attempt=0
 until [ -S /run/xrdp/sesman.socket ]; do
+  kill -0 "$entrypoint_pid" 2>/dev/null || fail 'entrypoint exited during startup'
   attempt=$((attempt + 1))
   [ "$attempt" -lt 100 ] || fail 'session manager did not become ready'
   sleep 0.1
 done
+sesman_pid=$(pidof xrdp-sesman)
 
 # This ordinary account has a usable shell, so denial must come from access policy.
 adduser -D -s /bin/sh regression-denied
@@ -98,6 +100,13 @@ until [ -L /home/taoli/data/SingletonLock ]; do
 done
 browser_owner=$(readlink /home/taoli/data/SingletonLock)
 browser_pid=${browser_owner##*-}
+tr '\000' '\n' < "/proc/$browser_pid/cmdline" > /tmp/browser-command-line
+grep -Fxq -- --disable-web-security /tmp/browser-command-line || fail 'exchange API CORS support was not enabled'
+grep -Fxq -- --user-data-dir=/home/taoli/data /tmp/browser-command-line || fail 'browser is not using its dedicated profile'
+[ "$(awk '/^Max open files/ { print $4 ":" $5 }' "/proc/$browser_pid/limits")" = 65535:65535 ] ||
+  fail 'Chromium did not inherit the raised file descriptor limit through sesman'
+echo 'PASS: Chromium inherits nofile=65535 through a real RDP session'
+echo 'PASS: the dedicated Chromium session has exchange API CORS support enabled'
 kill -KILL "$browser_pid"
 attempt=0
 while pidof Xorg >/dev/null || pidof xrdp-sesexec >/dev/null; do

@@ -124,7 +124,7 @@ expect_refusal "$SECOND" 'concurrent container was accepted'
   fail 'concurrent attempt changed the live lock'
 "$DOCKER_BIN" exec "$FIRST" sh -c '
   set -eu
-  printf "%s\n" --disable-dev-shm-usage --disable-gpu --use-gl=disabled \
+  printf "%s\n" --disable-dev-shm-usage --disable-gpu --use-gl=disabled --disable-web-security \
     --no-default-browser-check --no-first-run --lang=zh-CN \
     --user-data-dir=/home/taoli/data https://taoli.tools > /tmp/expected-arguments
   cmp /tmp/expected-arguments /tmp/browser-arguments

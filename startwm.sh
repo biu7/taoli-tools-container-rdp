@@ -80,4 +80,5 @@ trap - EXIT
 
 # Openbox must not keep the volume locked after Chromium exits.
 openbox-session 9>&- &
-exec chromium --disable-dev-shm-usage --disable-gpu --use-gl=disabled --no-default-browser-check --no-first-run --lang=zh-CN --user-data-dir=/home/taoli/data https://taoli.tools
+# This dedicated profile calls exchange APIs which do not all support CORS.
+exec chromium --disable-dev-shm-usage --disable-gpu --use-gl=disabled --disable-web-security --no-default-browser-check --no-first-run --lang=zh-CN --user-data-dir=/home/taoli/data https://taoli.tools

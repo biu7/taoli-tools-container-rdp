@@ -57,6 +57,26 @@ check_services() {
   check_service tailscaled "$TAILSCALED_PID"
 }
 
+# Chromium is spawned by sesman, so set the inherited limit before starting it.
+# Adapted from upstream 94b35bc for the RDP session process tree.
+CHROMIUM_NOFILE_LIMIT=${CHROMIUM_NOFILE_LIMIT:-65535}
+case "$CHROMIUM_NOFILE_LIMIT" in
+  *[!0-9]*|'')
+    echo "CHROMIUM_NOFILE_LIMIT must be a positive integer." >&2
+    exit 1
+    ;;
+esac
+if ! [ "$CHROMIUM_NOFILE_LIMIT" -gt 0 ] 2>/dev/null; then
+  echo "CHROMIUM_NOFILE_LIMIT must be a positive integer." >&2
+  exit 1
+fi
+nofile_hard_limit=$(ulimit -Hn)
+if [ "$nofile_hard_limit" != unlimited ] && [ "$CHROMIUM_NOFILE_LIMIT" -gt "$nofile_hard_limit" ]; then
+  CHROMIUM_NOFILE_LIMIT=$nofile_hard_limit
+fi
+ulimit -Sn "$CHROMIUM_NOFILE_LIMIT"
+echo "Chromium session nofile soft limit: $(ulimit -Sn)"
+
 mkdir -p /var/run/xrdp /var/log /var/lib/tailscale
 chown -R taoli:taoli /var/lib/tailscale
 chmod 700 /var/lib/tailscale

@@ -84,6 +84,9 @@ wait_for_failure() {
       if [ -n "${2:-}" ]; then
         [ "$exit_code" -eq "$2" ] || fail "$1: expected exit $2, got $exit_code"
       fi
+      if [ -n "${3:-}" ]; then
+        "$DOCKER_BIN" logs "$ACTIVE_CONTAINER" 2>&1 | grep -Fq "$3" || fail "$1: expected error was not logged"
+      fi
       "$DOCKER_BIN" rm "$ACTIVE_CONTAINER" >/dev/null
       return
     fi
@@ -92,6 +95,41 @@ wait_for_failure() {
   done
   fail "$1: PID 1 stayed alive after daemon termination"
 }
+
+# Verify both the session manager and the actual browser for administrator
+# overrides and hosts with a lower hard limit.
+for limit_case in override capped; do
+  if [ "$limit_case" = override ]; then
+    start_container nofile-override env CHROMIUM_NOFILE_LIMIT=32768 /usr/local/bin/entrypoint.sh
+    expected_limit=32768
+  else
+    start_container nofile-capped sh -ec 'ulimit -Sn 1024; ulimit -Hn 8192; exec /usr/local/bin/entrypoint.sh'
+    expected_limit=8192
+  fi
+  actual_limit=$("$DOCKER_BIN" exec "$ACTIVE_CONTAINER" sh -c '
+    awk '\''/^Max open files/ { print $4 }'\'' /proc/$(pidof xrdp-sesman)/limits
+  ')
+  [ "$actual_limit" = "$expected_limit" ] || fail "incorrect inherited nofile limit for $limit_case"
+  "$DOCKER_BIN" exec --user xrdp "$ACTIVE_CONTAINER" timeout 15 xrdp-sesrun -t Xorg -p '' taoli >/dev/null 2>&1 ||
+    fail "could not start a browser to verify the $limit_case limit"
+  attempt=0
+  until "$DOCKER_BIN" exec "$ACTIVE_CONTAINER" test -L /home/taoli/data/SingletonLock; do
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt 100 ] || fail "browser did not start for $limit_case"
+    sleep 0.1
+  done
+  browser_limit=$("$DOCKER_BIN" exec "$ACTIVE_CONTAINER" sh -c '
+    owner=$(readlink /home/taoli/data/SingletonLock)
+    awk '\''/^Max open files/ { print $4 }'\'' /proc/${owner##*-}/limits
+  ')
+  [ "$browser_limit" = "$expected_limit" ] || fail "incorrect actual Chromium nofile limit for $limit_case"
+  stop_cleanly
+done
+for invalid_limit in 0 -1 invalid 99999999999999999999999999; do
+  launch_container "nofile-invalid-$invalid_limit" env "CHROMIUM_NOFILE_LIMIT=$invalid_limit" /usr/local/bin/entrypoint.sh
+  wait_for_failure 'invalid Chromium nofile limit' 1 'CHROMIUM_NOFILE_LIMIT must be a positive integer.'
+done
+echo 'PASS: actual Chromium nofile override, hard-limit cap and invalid values'
 
 # A killed daemon can leave its Unix socket behind in the same container.
 # Delay the replacement daemon, so mistaking the stale inode for readiness

@@ -5,6 +5,10 @@ services:
     image: ghcr.io/biu7/taoli-tools-container-rdp:latest
     container_name: taoli-tools-container
     restart: always
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
     security_opt:
       - seccomp:./chromium.json
     volumes:

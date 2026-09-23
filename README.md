@@ -26,6 +26,19 @@ XRDP 固定使用 [0.10.6.1 官方版本](https://github.com/neutrinolabs/xrdp/r
 
 只提供 Xorg 桌面，最多保留一个会话。断线和空闲不会结束会话，重新连接会恢复原桌面；**关闭或崩溃的 Chromium 会结束桌面会话**，下次登录再启动浏览器。客户端指定的启动程序以及用户目录里的 `startwm.sh` 不会覆盖系统启动流程。
 
+Chromium 使用 `--disable-web-security`，使页面可以直接调用未提供 CORS 支持的交易所 API。该设置对这个浏览器中的所有页面生效；浏览器使用专用的 `/home/taoli/data` 配置目录，用于此服务的交易所业务。
+
+为支持 PGlite 的 OPFS 文件句柄池，默认将浏览器继承的 `nofile` 软限制设为 `65535`，Compose 同时设置 `65535` 的软、硬限制。需要降低时，可在 `container` 服务下添加：
+
+```yaml
+environment:
+  CHROMIUM_NOFILE_LIMIT: "32768"
+```
+
+直接运行镜像也可传入 `-e CHROMIUM_NOFILE_LIMIT=32768`。该值必须为正整数，超过容器硬限制时会自动裁剪；由入口脚本在启动会话管理器前设置，并传递给实际的 RDP 浏览器进程。
+
+该变量设置启动时继承的软限制；Chromium 可能自行提高较低的软限制。例如当前版本会把 `4096` 提高到 `8192`（不超过硬限制）。若需要严格限制文件句柄数量，请同时调整 Compose 的 `ulimits.nofile.hard`，且 `soft` 不得超过 `hard`。
+
 ## 连接方式
 
 ⚠️ **仅允许 `taoli` 账户免密登录，禁止 `root` 和其他账户通过 RDP 登录。通过 Tailscale VPN 访问，不向宿主机发布 RDP 端口；请在 Tailscale 中限制可访问该设备的成员。**
@@ -69,14 +82,18 @@ docker compose up -d
 docker compose logs -f container
 ```
 
-### 旧版本首次升级：添加 XRDP 证书卷
+### 旧版本首次升级：更新运行配置与证书卷
 
-镜像更新不会自动更新部署目录里的 Compose 文件。请将 `docker-compose.yml` 中 `container` 服务的 `volumes` 增加 `xrdp:/var/lib/xrdp`，同时在顶层 `volumes` 增加 `xrdp:`。保留已有配置和部署目录，示意如下：
+镜像更新不会自动更新部署目录里的配置文件。请将 `docker-compose.yml` 中 `container` 服务的 `volumes` 增加 `xrdp:/var/lib/xrdp`，同时在顶层 `volumes` 增加 `xrdp:`，并补充 `ulimits`。保留已有配置和部署目录，示意如下：
 
 ```yaml
 services:
   container:
     # 保留原有 image、security_opt 等配置
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
     volumes:
       - data:/home/taoli/data
       - tailscale:/var/lib/tailscale
@@ -88,6 +105,8 @@ volumes:
 ```
 
 未挂载此卷时，每次重建都会生成新证书，客户端会再次提示身份变化。
+
+同时同步本仓库的 `chromium.json`，其中新增了 `openat2` 和 `statx` 权限。若使用自定义 seccomp 策略，请合并这两条规则并保留其他自定义内容。新的 Compose 限制和 seccomp 策略均需重建容器才能生效。
 
 ### 旧版本首次升级：迁移 Tailscale 状态
 
@@ -159,3 +178,13 @@ sh tests/test-rdp-config.sh taoli-tools-container-rdp:test
 ```
 
 RDP 配置测试需要已有的 Python 3（标准库 `ssl` 支持 TLS 1.3，可用 `PYTHON_BIN` 指定解释器）。测试使用隔离网络，不加入 Tailnet、不发布端口；覆盖认证、实际 Xorg/Chromium 生命周期、守护进程、数据锁、RDP/TLS 握手及证书持久化，不覆盖真实图形 RDP 客户端或跨设备连接。
+
+## 上游同步
+
+2026-09-23 核对了 [taoli-tools/taoli-tools-container](https://github.com/taoli-tools/taoli-tools-container) 从共同基线 `0f636b7` 到 `94b35bc` 的全部 11 个提交，选择性移植适用的变更：
+
+- [2f33f21](https://github.com/taoli-tools/taoli-tools-container/commit/2f33f21)：增加 `openat2`、`statx`，保留本项目 `chromium.json` 的文件名和其他规则。
+- [94b35bc](https://github.com/taoli-tools/taoli-tools-container/commit/94b35bc)：合入浏览器跨域 API 支持和文件句柄限制，按 XRDP 创建会话的方式传递限制。
+- 上游的 Tailscale 状态持久化修复已由本项目显式使用 `/var/lib/tailscale` 的方式覆盖。
+
+noVNC 前端、Swarm/signer 部署与 Docker daemon 全局配置改动不适用于此 RDP 分支；本项目继续使用服务级配置。
