@@ -33,6 +33,23 @@ jobs:
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Build regression image
+        uses: docker/build-push-action@v6
+        with:
+          load: true
+          platforms: linux/amd64
+          tags: taoli-tools-container-rdp:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run regression checks
+        run: |
+          sh tests/test-setup.sh
+          sh tests/test-auth.sh taoli-tools-container-rdp:test
+          sh tests/test-runtime.sh taoli-tools-container-rdp:test
+          sh tests/test-browser-lock.sh taoli-tools-container-rdp:test
+          sh tests/test-rdp-config.sh taoli-tools-container-rdp:test
+
       - name: Build and Push to Registries
         uses: docker/build-push-action@v6
         with:

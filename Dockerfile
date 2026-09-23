@@ -1,8 +1,23 @@
+FROM alpine:3.22.2 AS xrdp-builder
+
+# Alpine 3.22 still packages XRDP 0.10.3; build only XRDP from a verified release.
+RUN apk add --no-cache \
+  build-base curl ca-certificates pkgconf openssl-dev \
+  libx11-dev libxfixes-dev libxrandr-dev libjpeg-turbo-dev fuse3-dev \
+  linux-headers nasm linux-pam-dev opus-dev check-dev cmocka-dev
+COPY build-xrdp.sh /usr/local/bin/build-xrdp.sh
+RUN sh /usr/local/bin/build-xrdp.sh /xrdp-install
+
 FROM alpine:3.22.2
 
 RUN apk add --no-cache \
   openbox \
-  xrdp \
+  bash \
+  xinit \
+  linux-pam \
+  fuse3-libs \
+  libturbojpeg \
+  opus \
   xorgxrdp \
   xorg-server \
   xf86-video-dummy \
@@ -17,6 +32,8 @@ RUN apk add --no-cache \
   musl-locales \
   musl-locales-lang
 
+COPY --from=xrdp-builder /xrdp-install/ /
+
 RUN cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
 
 # 设置中文语言环境
@@ -24,29 +41,25 @@ ENV LANG=zh_CN.UTF-8 \
     LANGUAGE=zh_CN:zh \
     LC_ALL=zh_CN.UTF-8
 
-RUN addgroup -S taoli && adduser -S -G taoli -h /home/taoli -s /bin/sh taoli
+RUN addgroup -S taoli && adduser -S -G taoli -h /home/taoli -s /bin/sh taoli && \
+  addgroup -S xrdp && adduser -S -D -H -G xrdp -s /sbin/nologin xrdp
 
 RUN mkdir -p /home/taoli/data && \
   chown -R taoli:taoli /home/taoli
 
-# 配置 PAM 允许无密码登录
-RUN echo 'auth sufficient pam_permit.so' > /etc/pam.d/xrdp-sesman && \
-  echo 'account sufficient pam_permit.so' >> /etc/pam.d/xrdp-sesman && \
-  echo 'session required pam_unix.so' >> /etc/pam.d/xrdp-sesman
+# 仅允许 taoli 无密码登录，拒绝 root 和其他系统账户
+RUN printf '%s\n' \
+  'auth requisite pam_succeed_if.so user = taoli' \
+  'auth required pam_permit.so' \
+  'account requisite pam_succeed_if.so user = taoli' \
+  'account required pam_permit.so' \
+  'session required pam_unix.so' > /etc/pam.d/xrdp-sesman
 
-# 配置 XRDP 会话启动脚本
-RUN echo '#!/bin/sh' > /etc/xrdp/startwm.sh && \
-  echo 'export LANG=zh_CN.UTF-8' >> /etc/xrdp/startwm.sh && \
-  echo 'export LANGUAGE=zh_CN:zh' >> /etc/xrdp/startwm.sh && \
-  echo 'export LC_ALL=zh_CN.UTF-8' >> /etc/xrdp/startwm.sh && \
-  echo '' >> /etc/xrdp/startwm.sh && \
-  echo 'rm -f /home/taoli/data/SingletonLock' >> /etc/xrdp/startwm.sh && \
-  echo 'openbox-session &' >> /etc/xrdp/startwm.sh && \
-  echo 'exec chromium --disable-dev-shm-usage --disable-gpu --use-gl=disabled --no-default-browser-check --no-first-run --lang=zh-CN --user-data-dir=/home/taoli/data https://taoli.tools' >> /etc/xrdp/startwm.sh && \
-  chmod +x /etc/xrdp/startwm.sh
+# 固定 Xorg 单用户会话；Chromium 退出即结束桌面会话。
+COPY xrdp.ini sesman.ini startwm.sh /etc/xrdp/
 
-ADD entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY entrypoint.sh init-xrdp.sh /usr/local/bin/
 
-RUN chmod +x /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/init-xrdp.sh /etc/xrdp/startwm.sh
 
 CMD ["/usr/local/bin/entrypoint.sh"]

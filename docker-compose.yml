@@ -10,7 +10,9 @@ services:
     volumes:
       - data:/home/taoli/data
       - tailscale:/var/lib/tailscale
+      - xrdp:/var/lib/xrdp
 
 volumes:
   data:
   tailscale:
+  xrdp:
